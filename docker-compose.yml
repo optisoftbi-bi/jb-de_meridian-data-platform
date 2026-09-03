@@ -16,8 +16,19 @@ services:
       retries: 10
       start_period: 5s
 
+  compute:
+    build: .
+    volumes:
+      - bronze_data:/data/bronze
+    networks:
+      - meridian_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
+  bronze_data:
 
 networks:
   meridian_network:
