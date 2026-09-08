@@ -1,10 +1,10 @@
 import argparse
 import json
 
-from src.bronze_ingestion import ingest_to_bronze
 from src.bronze_inspection import inspect_bronze
 from src.job_validation import validate_trips_job
 from src.window_validation import validate_month_window
+from src.bronze_sync import sync_bronze
 
 
 def main():
@@ -17,29 +17,53 @@ def main():
 
     args = parser.parse_args()
 
+    # Validate job
     if not validate_trips_job(args.job):
-        raise ValueError(f"Invalid job: {args.job}")
-
-    if not validate_month_window(args.window):
-        raise ValueError(f"Invalid monthly window: {args.window}")
-
-    market = args.job.split(":")[1]
-
-    if args.command == "run":
-        if args.action_or_layer != "ingest-to-bronze":
-            raise ValueError(
-                f"Unsupported run operation: {args.action_or_layer}"
-            )
-
-        destination = ingest_to_bronze(
-            market=market,
-            window=args.window,
+        raise ValueError(
+            f"Invalid job: {args.job}"
         )
 
-        print(destination)
-        return
+    # Bronze / Silver currently use monthly windows
+    if not validate_month_window(args.window):
+        raise ValueError(
+            f"Invalid monthly window: {args.window}"
+        )
 
+    # trips:jc -> jc
+    # trips:nyc -> nyc
+    market = args.job.split(":")[1]
+
+    # -------------------------
+    # JUST RUN
+    # -------------------------
+    if args.command == "run":
+
+        if args.action_or_layer == "ingest-to-bronze":
+
+            sync_result = sync_bronze()
+
+            inspection = inspect_bronze(
+                market=market,
+                window=args.window,
+            )
+
+            result = {
+                "sync": sync_result,
+                "bronze": inspection,
+            }
+
+            print(json.dumps(result))
+            return
+
+        raise ValueError(
+            f"Unsupported run operation: {args.action_or_layer}"
+        )
+
+    # -------------------------
+    # JUST INSPECT
+    # -------------------------
     if args.command == "inspect":
+
         if args.action_or_layer != "bronze":
             raise ValueError(
                 f"Unsupported inspect layer: {args.action_or_layer}"

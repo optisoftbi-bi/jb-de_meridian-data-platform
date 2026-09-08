@@ -72,3 +72,76 @@ def ingest_to_bronze(market: str, window: str) -> str:
     )
 
     return destination
+
+
+def download_object_to_file(
+    source_key: str,
+    destination_path: str,
+    expected_size: int | None = None,
+) -> None:
+    object_url = f"{S3_OBJECT_BASE_URL}/{source_key}"
+
+    destination = Path(destination_path)
+
+    destination.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    part_path = Path(
+        str(destination) + ".part"
+    )
+
+    response = request(
+        "GET",
+        object_url,
+        stream=True,
+    )
+
+    response.raise_for_status()
+
+    total_size = int(
+        response.headers.get(
+            "Content-Length",
+            expected_size or 0,
+        )
+    )
+
+    downloaded = 0
+    chunk_size = 8 * 1024 * 1024
+
+    with part_path.open("wb") as file:
+        for chunk in response.iter_content(
+            chunk_size=chunk_size
+        ):
+            if not chunk:
+                continue
+
+            file.write(chunk)
+            downloaded += len(chunk)
+
+            if total_size > 0:
+                percent = (
+                    downloaded / total_size
+                ) * 100
+
+                downloaded_mb = (
+                    downloaded / 1024 / 1024
+                )
+
+                total_mb = (
+                    total_size / 1024 / 1024
+                )
+
+                print(
+                    f"\r"
+                    f"{percent:6.2f}% | "
+                    f"{downloaded_mb:,.1f} MB / "
+                    f"{total_mb:,.1f} MB",
+                    end="",
+                    flush=True,
+                )
+
+    print()
+
+    part_path.replace(destination)

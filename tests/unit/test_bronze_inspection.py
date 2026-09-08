@@ -9,6 +9,14 @@ import pytest
 
 from src.bronze_inspection import find_bronze_archive
 
+from src.bronze_inspection import (
+    find_bronze_archive,
+    list_zip_members,
+    find_csv_members,
+    select_csv_member,
+    count_csv_rows,
+)
+
 
 def test_find_bronze_archive_returns_zip(tmp_path):
     archive = tmp_path / "JC-202606-citibike-tripdata.csv.zip"
@@ -85,3 +93,33 @@ def test_count_csv_rows_excludes_header(tmp_path):
     )
 
     assert result == 3
+
+
+def test_select_csv_member_for_requested_month():
+    members = [
+        "201803-citibike-tripdata.csv",
+        "201804-citibike-tripdata.csv",
+        "201805-citibike-tripdata.csv",
+    ]
+
+    result = select_csv_member(
+        members,
+        market="nyc",
+        window="2018-04",
+    )
+
+    assert result == "201804-citibike-tripdata.csv"
+
+
+def test_select_csv_member_raises_when_month_missing():
+    members = [
+        "201803-citibike-tripdata.csv",
+        "201805-citibike-tripdata.csv",
+    ]
+
+    with pytest.raises(FileNotFoundError):
+        select_csv_member(
+            members,
+            market="nyc",
+            window="2018-04",
+        )
