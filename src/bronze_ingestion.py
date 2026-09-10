@@ -1,147 +1,64 @@
+import hashlib
+import sys
 from pathlib import Path
+from urllib.parse import quote
+
 from requests import request
-
-from src.s3_client import fetch_s3_listing
-from src.source_discovery import parse_s3_listing, select_source_object
-
 
 
 S3_OBJECT_BASE_URL = "https://s3.amazonaws.com/tripdata"
 
 
-def build_bronze_path(source_key: str, window: str, market: str) -> str:
-   year = window[0:4]
-   filename = Path(source_key).name
-   destination = Path("/data/bronze") / market / year / filename
-   
-   return str(destination)
-
-
-def download_object(source_key: str) -> bytes:
-    object_url = f"{S3_OBJECT_BASE_URL}/{source_key}"
-
-    response = request("GET", object_url)
-    response.raise_for_status()
-
-    return response.content
-
-
-from pathlib import Path
-
-
-def write_bronze_file(destination_path: str, content: bytes) -> None:
-    destination = Path(destination_path)
-
-    destination.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    destination.write_bytes(content)
-
-
-def ingest_to_bronze(market: str, window: str) -> str:
-    xml_text = fetch_s3_listing()
-
-    objects = parse_s3_listing(xml_text)
-
-    selected_object = select_source_object(
-        objects,
-        market,
-        window,
-    )
-
-    if selected_object is None:
-        raise ValueError(
-            f"No source object found for market={market}, window={window}"
-        )
-
-    source_key = selected_object["key"]
-
-    destination = build_bronze_path(
-        source_key,
-        window,
-        market,
-    )
-
-    content = download_object(source_key)
-
-    write_bronze_file(
-        destination,
-        content,
-    )
-
-    return destination
-
-
 def download_object_to_file(
     source_key: str,
     destination_path: str,
-    expected_size: int | None = None,
-) -> None:
-    object_url = f"{S3_OBJECT_BASE_URL}/{source_key}"
-
+    expected_size: int,
+) -> str:
+    object_url = f"{S3_OBJECT_BASE_URL}/{quote(source_key, safe='/')}"
     destination = Path(destination_path)
-
-    destination.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    part_path = Path(
-        str(destination) + ".part"
-    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    part_path = destination.with_name(destination.name + ".part")
 
     response = request(
         "GET",
         object_url,
         stream=True,
+        timeout=(10, 120),
     )
-
     response.raise_for_status()
 
-    total_size = int(
-        response.headers.get(
-            "Content-Length",
-            expected_size or 0,
-        )
-    )
-
     downloaded = 0
-    chunk_size = 8 * 1024 * 1024
+    digest = hashlib.sha256()
 
-    with part_path.open("wb") as file:
-        for chunk in response.iter_content(
-            chunk_size=chunk_size
-        ):
-            if not chunk:
-                continue
+    try:
+        with part_path.open("wb") as file:
+            for chunk in response.iter_content(chunk_size=8 * 1024 * 1024):
+                if not chunk:
+                    continue
+                file.write(chunk)
+                digest.update(chunk)
+                downloaded += len(chunk)
 
-            file.write(chunk)
-            downloaded += len(chunk)
+                if expected_size:
+                    percent = downloaded / expected_size * 100
+                    print(
+                        f"\rDownloading {percent:6.2f}%",
+                        end="",
+                        flush=True,
+                        file=sys.stderr,
+                    )
 
-            if total_size > 0:
-                percent = (
-                    downloaded / total_size
-                ) * 100
+        if downloaded != expected_size:
+            raise IOError(
+                f"Downloaded {downloaded} bytes; expected {expected_size}"
+            )
 
-                downloaded_mb = (
-                    downloaded / 1024 / 1024
-                )
+        part_path.replace(destination)
+    except Exception:
+        part_path.unlink(missing_ok=True)
+        raise
+    finally:
+        response.close()
 
-                total_mb = (
-                    total_size / 1024 / 1024
-                )
-
-                print(
-                    f"\r"
-                    f"{percent:6.2f}% | "
-                    f"{downloaded_mb:,.1f} MB / "
-                    f"{total_mb:,.1f} MB",
-                    end="",
-                    flush=True,
-                )
-
-    print()
-
-    part_path.replace(destination)
+    print(file=sys.stderr)
+    return digest.hexdigest()

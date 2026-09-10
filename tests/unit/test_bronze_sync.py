@@ -1,323 +1,104 @@
+from pathlib import Path
 from unittest.mock import patch
 
+import pytest
 from requests import RequestException
 
-from src.bronze_sync import (
-    build_sync_path,
-    sync_bronze,
-)
+from src.bronze_sync import _version_id, sync_bronze
 
 
-def test_sync_bronze_downloads_new_object():
-    manifest = {}
+def _object(key, modified="2026-07-01T10:00:00Z", size=100):
+    return {"key": key, "last_modified": modified, "size": size}
 
-    s3_objects = [
-        {
-            "key": "JC-202606-citibike-tripdata.zip",
-            "last_modified": "2026-07-01T10:00:00Z",
-            "size": 100,
-        }
+
+def test_ingestion_downloads_only_requested_window():
+    objects = [
+        _object("JC-202605-citibike-tripdata.csv.zip"),
+        _object("JC-202606-citibike-tripdata.csv.zip"),
+        _object("202606-citibike-tripdata.zip"),
+        _object("JC-202607-citibike-tripdata.csv.zip"),
     ]
 
-    comparison = {
-        "new": s3_objects,
-        "changed": [],
-        "same": [],
-        "deleted": [],
-    }
-
-    with patch(
-        "src.bronze_sync.load_manifest",
-        return_value=manifest,
-    ), patch(
-        "src.bronze_sync.fetch_s3_listing",
-        return_value="<xml></xml>",
-    ), patch(
-        "src.bronze_sync.parse_s3_listing",
-        return_value=s3_objects,
-    ), patch(
-        "src.bronze_sync.compare_objects",
-        return_value=comparison,
-    ), patch(
-        "src.bronze_sync.build_sync_path",
-        return_value="/data/bronze/jc/2026/file.zip",
-    ), patch(
-        "src.bronze_sync.download_object",
-        return_value=b"zip-data",
-    ) as mock_download, patch(
-        "src.bronze_sync.write_bronze_file"
-    ) as mock_write, patch(
+    with patch("src.bronze_sync.fetch_s3_listing", return_value="xml"), patch(
+        "src.bronze_sync.parse_s3_listing", return_value=objects
+    ), patch("src.bronze_sync.load_manifest", return_value=None), patch(
+        "src.bronze_sync.download_object_to_file", return_value="sha"
+    ) as download, patch(
+        "src.bronze_sync.select_csv_members", return_value=[{"name": "data.csv"}]
+    ), patch("src.bronze_sync.count_selected_rows", return_value=109897), patch(
         "src.bronze_sync.save_manifest"
-    ) as mock_save:
+    ):
+        result = sync_bronze("jc", "2026-06")
 
-        result = sync_bronze()
-
-    mock_download.assert_called_once_with(
-        "JC-202606-citibike-tripdata.zip"
+    assert download.call_count == 1
+    assert download.call_args.kwargs["source_key"] == (
+        "JC-202606-citibike-tripdata.csv.zip"
     )
-
-    mock_write.assert_called_once_with(
-        "/data/bronze/jc/2026/file.zip",
-        b"zip-data",
-    )
-
-    mock_save.assert_called_once()
-
-    assert result["status"] == "synced"
-    assert result["new"] == 1
-    assert result["changed"] == 0
-    assert result["deleted"] == 0
+    assert result["rows"] == 109897
 
 
-def test_sync_bronze_replaces_changed_object():
-    key = "202606-citibike-tripdata.zip"
-
+def test_same_version_is_idempotent(tmp_path):
+    selected = _object("JC-202606-citibike-tripdata.csv.zip")
+    version_id = _version_id(selected)
+    local_file = tmp_path / "source.zip"
+    local_file.write_bytes(b"existing")
     manifest = {
-        key: {
-            "last_modified": "2026-01-01T10:00:00Z",
-            "size": 100,
-            "local_path": (
-                "/data/bronze/nyc/2026/"
-                "202606-citibike-tripdata.zip"
-            ),
-        }
+        "active_version": version_id,
+        "versions": {version_id: {"local_path": str(local_file)}},
     }
 
-    changed_object = {
-        "key": key,
-        "last_modified": "2026-02-01T10:00:00Z",
-        "size": 120,
+    with patch("src.bronze_sync.fetch_s3_listing", return_value="xml"), patch(
+        "src.bronze_sync.parse_s3_listing", return_value=[selected]
+    ), patch("src.bronze_sync.load_manifest", return_value=manifest), patch(
+        "src.bronze_sync.download_object_to_file"
+    ) as download, patch("src.bronze_sync.save_manifest") as save:
+        result = sync_bronze("jc", "2026-06")
+
+    download.assert_not_called()
+    save.assert_not_called()
+    assert result["status"] == "same"
+
+
+def test_changed_source_preserves_previous_manifest_version():
+    old = _object("JC-202606-citibike-tripdata.zip", size=90)
+    new = _object("JC-202606-citibike-tripdata.csv.zip", size=100)
+    old_id = _version_id(old)
+    manifest = {
+        "active_version": old_id,
+        "versions": {old_id: {"local_path": "/old/source.zip"}},
     }
 
-    comparison = {
-        "new": [],
-        "changed": [changed_object],
-        "same": [],
-        "deleted": [],
-    }
-
-    with patch(
-        "src.bronze_sync.load_manifest",
-        return_value=manifest,
+    with patch("src.bronze_sync.fetch_s3_listing", return_value="xml"), patch(
+        "src.bronze_sync.parse_s3_listing", return_value=[new]
+    ), patch("src.bronze_sync.load_manifest", return_value=manifest), patch(
+        "src.bronze_sync.download_object_to_file", return_value="sha"
     ), patch(
-        "src.bronze_sync.fetch_s3_listing",
-        return_value="<xml></xml>",
-    ), patch(
-        "src.bronze_sync.parse_s3_listing",
-        return_value=[changed_object],
-    ), patch(
-        "src.bronze_sync.compare_objects",
-        return_value=comparison,
-    ), patch(
-        "src.bronze_sync.build_sync_path",
-        return_value=(
-            "/data/bronze/nyc/2026/"
-            "202606-citibike-tripdata.zip"
-        ),
-    ), patch(
-        "src.bronze_sync.download_object",
-        return_value=b"new-data",
-    ) as mock_download, patch(
-        "src.bronze_sync.write_bronze_file"
-    ) as mock_write, patch(
+        "src.bronze_sync.select_csv_members", return_value=[{"name": "data.csv"}]
+    ), patch("src.bronze_sync.count_selected_rows", return_value=10), patch(
         "src.bronze_sync.save_manifest"
-    ) as mock_save:
+    ) as save:
+        sync_bronze("jc", "2026-06")
 
-        result = sync_bronze()
-
-    mock_download.assert_called_once_with(key)
-
-    mock_write.assert_called_once_with(
-        "/data/bronze/nyc/2026/"
-        "202606-citibike-tripdata.zip",
-        b"new-data",
-    )
-
-    mock_save.assert_called_once()
-
-    assert result["status"] == "synced"
-    assert result["changed"] == 1
+    saved = save.call_args.args[2]
+    assert old_id in saved["versions"]
+    assert _version_id(new) in saved["versions"]
+    assert saved["active_version"] == _version_id(new)
 
 
-def test_sync_bronze_skips_same_object():
-    key = "202606-citibike-tripdata.zip"
+def test_missing_window_fails_without_download():
+    with patch("src.bronze_sync.fetch_s3_listing", return_value="xml"), patch(
+        "src.bronze_sync.parse_s3_listing", return_value=[]
+    ), patch("src.bronze_sync.download_object_to_file") as download:
+        with pytest.raises(ValueError, match="No source object found"):
+            sync_bronze("jc", "2026-06")
 
-    manifest = {
-        key: {
-            "last_modified": "2026-01-01T10:00:00Z",
-            "size": 100,
-            "local_path": (
-                "/data/bronze/nyc/2026/"
-                "202606-citibike-tripdata.zip"
-            ),
-        }
-    }
+    download.assert_not_called()
 
-    same_object = {
-        "key": key,
-        "last_modified": "2026-01-01T10:00:00Z",
-        "size": 100,
-    }
 
-    comparison = {
-        "new": [],
-        "changed": [],
-        "same": [same_object],
-        "deleted": [],
-    }
-
+def test_ingestion_fails_when_s3_is_offline():
     with patch(
-        "src.bronze_sync.load_manifest",
-        return_value=manifest,
-    ), patch(
-        "src.bronze_sync.fetch_s3_listing",
-        return_value="<xml></xml>",
-    ), patch(
-        "src.bronze_sync.parse_s3_listing",
-        return_value=[same_object],
-    ), patch(
-        "src.bronze_sync.compare_objects",
-        return_value=comparison,
-    ), patch(
-        "src.bronze_sync.download_object"
-    ) as mock_download, patch(
-        "src.bronze_sync.write_bronze_file"
-    ) as mock_write, patch(
-        "src.bronze_sync.save_manifest"
-    ) as mock_save:
-
-        result = sync_bronze()
-
-    mock_download.assert_not_called()
-    mock_write.assert_not_called()
-
-    mock_save.assert_called_once()
-
-    assert result["status"] == "synced"
-    assert result["same"] == 1
-    assert result["new"] == 0
-    assert result["changed"] == 0
-
-
-def test_sync_bronze_removes_deleted_object(tmp_path):
-    local_file = tmp_path / "A.zip"
-    local_file.write_bytes(b"old-data")
-
-    manifest = {
-        "A.zip": {
-            "last_modified": "2026-01-01T10:00:00Z",
-            "size": 100,
-            "local_path": str(local_file),
-        }
-    }
-
-    comparison = {
-        "new": [],
-        "changed": [],
-        "same": [],
-        "deleted": [
-            {
-                "key": "A.zip",
-                **manifest["A.zip"],
-            }
-        ],
-    }
-
-    with patch(
-        "src.bronze_sync.load_manifest",
-        return_value=manifest,
-    ), patch(
-        "src.bronze_sync.fetch_s3_listing",
-        return_value="<xml></xml>",
-    ), patch(
-        "src.bronze_sync.parse_s3_listing",
-        return_value=[],
-    ), patch(
-        "src.bronze_sync.compare_objects",
-        return_value=comparison,
-    ), patch(
-        "src.bronze_sync.save_manifest"
-    ) as mock_save:
-
-        result = sync_bronze()
-
-    assert local_file.exists() is False
-
-    mock_save.assert_called_once()
-
-    assert result["status"] == "synced"
-    assert result["deleted"] == 1
-
-
-def test_sync_bronze_uses_existing_manifest_when_s3_offline():
-    manifest = {
-        "A.zip": {
-            "last_modified": "2026-01-01T10:00:00Z",
-            "size": 100,
-            "local_path": "/data/bronze/A.zip",
-        }
-    }
-
-    with patch(
-        "src.bronze_sync.load_manifest",
-        return_value=manifest,
-    ), patch(
         "src.bronze_sync.fetch_s3_listing",
         side_effect=RequestException("offline"),
-    ), patch(
-        "src.bronze_sync.save_manifest"
-    ) as mock_save:
-
-        result = sync_bronze()
-
-    mock_save.assert_not_called()
-
-    assert result["status"] == "offline"
-    assert result["new"] == 0
-    assert result["changed"] == 0
-    assert result["same"] == 1
-    assert result["deleted"] == 0
-
-
-def test_build_sync_path_for_jc():
-    result = build_sync_path(
-        "JC-202606-citibike-tripdata.csv.zip"
-    )
-
-    assert result == (
-        "/data/bronze/jc/2026/"
-        "JC-202606-citibike-tripdata.csv.zip"
-    )
-
-
-def test_build_sync_path_for_nyc_yearly_archive():
-    result = build_sync_path(
-        "2018-citibike-tripdata.zip"
-    )
-
-    assert result == (
-        "/data/bronze/nyc/2018/"
-        "2018-citibike-tripdata.zip"
-    )
-
-
-def test_build_sync_path_for_nyc_monthly_archive():
-    result = build_sync_path(
-        "202406-citibike-tripdata.zip"
-    )
-
-    assert result == (
-        "/data/bronze/nyc/2024/"
-        "202406-citibike-tripdata.zip"
-    )
-
-
-def test_build_sync_path_uses_filename_from_nested_key():
-    result = build_sync_path(
-        "archive/JC-202606-citibike-tripdata.csv.zip"
-    )
-
-    assert result == (
-        "/data/bronze/jc/2026/"
-        "JC-202606-citibike-tripdata.csv.zip"
-    )
+    ):
+        with pytest.raises(RuntimeError, match="Unable to read"):
+            sync_bronze("jc", "2026-06")

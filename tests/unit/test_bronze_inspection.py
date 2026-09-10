@@ -1,125 +1,95 @@
 from pathlib import Path
-from unittest.mock import patch
-from src.bronze_inspection import find_csv_members
-from zipfile import ZipFile
-
-from src.bronze_inspection import count_csv_rows
-
-import pytest
-
-from src.bronze_inspection import find_bronze_archive
+from zipfile import ZipFile, ZipInfo
 
 from src.bronze_inspection import (
-    find_bronze_archive,
-    list_zip_members,
-    find_csv_members,
-    select_csv_member,
-    count_csv_rows,
+    count_selected_rows,
+    inspect_bronze,
+    select_csv_members,
 )
+from src.bronze_manifest import save_manifest
 
 
-def test_find_bronze_archive_returns_zip(tmp_path):
-    archive = tmp_path / "JC-202606-citibike-tripdata.csv.zip"
-    archive.write_bytes(b"fake-zip")
+def _add_csv(archive, name, content, date_time):
+    info = ZipInfo(name, date_time=date_time)
+    archive.writestr(info, content)
 
-    with patch(
-        "src.bronze_inspection.BRONZE_ROOT",
-        tmp_path,
-    ):
-        # Our function expects:
-        # root / market / year
-        directory = tmp_path / "jc" / "2026"
-        directory.mkdir(parents=True)
 
-        archive.rename(
-            directory / "JC-202606-citibike-tripdata.csv.zip"
+def test_monthly_archive_selects_requested_csv(tmp_path):
+    archive_path = tmp_path / "jc.zip"
+    with ZipFile(archive_path, "w") as archive:
+        _add_csv(
+            archive,
+            "JC-202606-citibike-tripdata.csv",
+            "a,b\n1,2\n",
+            (2026, 7, 1, 10, 0, 0),
         )
 
-        result = find_bronze_archive(
-            market="jc",
-            window="2026-06",
-        )
+    selected = select_csv_members(archive_path, "2026-06")
 
-    assert result.name == "JC-202606-citibike-tripdata.csv.zip"
-
-
-def test_find_bronze_archive_raises_when_missing(tmp_path):
-    with patch(
-        "src.bronze_inspection.BRONZE_ROOT",
-        tmp_path,
-    ):
-        with pytest.raises(FileNotFoundError):
-            find_bronze_archive(
-                market="jc",
-                window="2026-06",
-            )
-
-
-
-def test_find_csv_members_ignores_macos_metadata():
-    members = [
-        "JC-202606-citibike-tripdata.csv",
-        "__MACOSX/._JC-202606-citibike-tripdata.csv",
-        ".DS_Store",
-        "notes.txt",
-    ]
-
-    result = find_csv_members(members)
-
-    assert result == [
+    assert [item["name"] for item in selected] == [
         "JC-202606-citibike-tripdata.csv"
     ]
+    assert count_selected_rows(archive_path, selected) == 1
 
 
-def test_count_csv_rows_excludes_header(tmp_path):
-    archive_path = tmp_path / "test.zip"
-
-    csv_content = (
-        "ride_id,start_station_id\n"
-        "1,JC001\n"
-        "2,JC002\n"
-        "3,JC003\n"
-    )
-
+def test_2018_april_selects_latest_folder_export(tmp_path):
+    archive_path = tmp_path / "2018.zip"
     with ZipFile(archive_path, "w") as archive:
-        archive.writestr(
-            "trips.csv",
-            csv_content,
+        _add_csv(
+            archive,
+            "2018-citibike-tripdata/201804-citibike-tripdata.csv",
+            "id\nold\n",
+            (2018, 9, 6, 10, 0, 0),
         )
+        for prefix in (
+            "2018-citibike-tripdata",
+            "2018-citibike-tripdata/4_April",
+        ):
+            _add_csv(
+                archive,
+                f"{prefix}/201804-citibike-tripdata_1.csv",
+                "id\na\nb\n",
+                (2024, 2, 21, 10, 0, 0),
+            )
+            _add_csv(
+                archive,
+                f"{prefix}/201804-citibike-tripdata_2.csv",
+                "id\nc\n",
+                (2024, 2, 21, 10, 1, 0),
+            )
 
-    result = count_csv_rows(
-        archive_path,
-        "trips.csv",
-    )
+    selected = select_csv_members(archive_path, "2018-04")
 
-    assert result == 3
-
-
-def test_select_csv_member_for_requested_month():
-    members = [
-        "201803-citibike-tripdata.csv",
-        "201804-citibike-tripdata.csv",
-        "201805-citibike-tripdata.csv",
+    assert [item["name"] for item in selected] == [
+        "2018-citibike-tripdata/4_April/201804-citibike-tripdata_1.csv",
+        "2018-citibike-tripdata/4_April/201804-citibike-tripdata_2.csv",
     ]
-
-    result = select_csv_member(
-        members,
-        market="nyc",
-        window="2018-04",
-    )
-
-    assert result == "201804-citibike-tripdata.csv"
+    assert count_selected_rows(archive_path, selected) == 3
 
 
-def test_select_csv_member_raises_when_month_missing():
-    members = [
-        "201803-citibike-tripdata.csv",
-        "201805-citibike-tripdata.csv",
-    ]
+def test_inspect_returns_exact_contract(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRONZE_PATH", str(tmp_path))
+    manifest = {
+        "active_version": "v1",
+        "versions": {"v1": {"rows": 109897}},
+    }
+    save_manifest("jc", "2026-06", manifest)
 
-    with pytest.raises(FileNotFoundError):
-        select_csv_member(
-            members,
-            market="nyc",
-            window="2018-04",
-        )
+    assert inspect_bronze("trips:jc", "jc", "2026-06") == {
+        "layer": "bronze",
+        "job": "trips:jc",
+        "window": "2026-06",
+        "objects": 1,
+        "rows": 109897,
+    }
+
+
+def test_inspect_missing_coordinate_returns_zero(tmp_path, monkeypatch):
+    monkeypatch.setenv("BRONZE_PATH", str(tmp_path))
+    assert inspect_bronze("trips:jc", "jc", "2026-06") == {
+        "layer": "bronze",
+        "job": "trips:jc",
+        "window": "2026-06",
+        "objects": 0,
+        "rows": 0,
+    }

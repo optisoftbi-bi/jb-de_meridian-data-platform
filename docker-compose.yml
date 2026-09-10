@@ -18,6 +18,8 @@ services:
 
   compute:
     build: .
+    environment:
+      BRONZE_PATH: ${BRONZE_PATH:-/data/bronze}
     volumes:
       - bronze_data:/data/bronze
     networks:

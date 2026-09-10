@@ -111,6 +111,20 @@ just report  daily-station-trips <market> <station> <day>
 
 Jobs של trips מקבלים חלון חודשי מדויק בפורמט `YYYY-MM`. ה־job של `station-daily` מקבל יום מדויק בפורמט `YYYY-MM-DD`. אין flags, ברירות מחדל או ארגומנטים אופציונליים.
 
+### Bronze milestone
+
+בשלב הנוכחי ממומשים `up`, `down`, `ingest-to-bronze` ו־`inspect bronze`. לאחר יצירת `.env` מתוך `.env.example`, תהליך העבודה הוא:
+
+```text
+just up
+just run ingest-to-bronze trips:jc 2019-06
+just inspect bronze trips:jc 2019-06
+```
+
+אפשר להחליף את ה־job ל־`trips:nyc` ואת החלון לחודש המבוקש. ההרצה מורידה רק את אובייקט המקור שמכסה את ה־coordinate שהתבקש, ולא את כל ה־bucket. הרצה חוזרת של אותה גרסת מקור משתמשת בגרסה המקומית הקיימת.
+
+`just down` מוחק גם את שני ה־volumes ולכן מוחק את נתוני Bronze ואת מסד הנתונים המקומי. אין להריץ אותו אם רוצים להמשיך מאוחר יותר מאותו state; במקרה כזה עוצרים רק את PostgreSQL באמצעות Docker Compose.
+
 ## Output Contract
 
 `inspect` ו־`report` כותבות אובייקט JSON אחד בלבד ל־stdout. לוגים, diagnostics ושגיאות נכתבים ל־stderr.

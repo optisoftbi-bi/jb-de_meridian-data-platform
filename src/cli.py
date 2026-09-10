@@ -40,9 +40,13 @@ def main():
 
         if args.action_or_layer == "ingest-to-bronze":
 
-            sync_result = sync_bronze()
+            sync_result = sync_bronze(
+                market=market,
+                window=args.window,
+            )
 
             inspection = inspect_bronze(
+                job=args.job,
                 market=market,
                 window=args.window,
             )
@@ -70,6 +74,7 @@ def main():
             )
 
         result = inspect_bronze(
+            job=args.job,
             market=market,
             window=args.window,
         )

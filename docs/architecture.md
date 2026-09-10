@@ -164,13 +164,13 @@ bronze/
             └── manifest
 ```
 
-המבנה הפיזי המדויק ייקבע בזמן המימוש, אך coordinate של חלון נסיעות נשאר market וחודש.
+זהו גם המבנה הפיזי שממומש בפרויקט. ה־coordinate של חלון נסיעות הוא market וחודש, ולכל coordinate יש manifest וגרסאות משלו.
 
 ### Raw Data and Provenance
 
-Bronze שומרת את הבתים של קובצי ה־CSV שנבחרו ללא שינוי. אין בה typing, normalization, schema conformance, business validation או row-level de-duplication.
+Bronze שומרת את ה־ZIP המקורי שהורד ללא שינוי. אין בה typing, normalization, schema conformance, business validation או row-level de-duplication.
 
-אפשר לשמור archive שהורד כמטמון, אך ה־manifest של החלון מגדיר במפורש אילו members מרכיבים את ה־export הפעיל. לכל coordinate נשמרים לפחות:
+ה־manifest של החלון מגדיר במפורש אילו CSV members בתוך ה־archive מרכיבים את ה־export הפעיל. כך אפשר לשמור את תוכן המקור המקורי ובמקביל למנוע טעינה של exports כפולים. לכל coordinate נשמרים לפחות:
 
 - source, market ו־window;
 - S3 object key, last modified וגודל;

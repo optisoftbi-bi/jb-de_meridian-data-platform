@@ -32,7 +32,8 @@ def test_fetch_s3_listing_calls_expected_url():
 
     mock_request.assert_called_once_with(
         "GET",
-        "https://s3.amazonaws.com/tripdata"
+        "https://s3.amazonaws.com/tripdata/",
+        timeout=30,
     )
 
 
