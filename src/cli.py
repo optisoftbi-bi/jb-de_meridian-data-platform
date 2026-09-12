@@ -5,6 +5,7 @@ from src.bronze_inspection import inspect_bronze
 from src.job_validation import validate_trips_job
 from src.window_validation import validate_month_window
 from src.bronze_sync import sync_bronze
+from src.silver_transform import inspect_silver, transform_to_silver
 
 
 def main():
@@ -59,6 +60,15 @@ def main():
             print(json.dumps(result))
             return
 
+        if args.action_or_layer == "transform-to-silver":
+            result = transform_to_silver(
+                job=args.job,
+                market=market,
+                window=args.window,
+            )
+            print(json.dumps(result))
+            return
+
         raise ValueError(
             f"Unsupported run operation: {args.action_or_layer}"
         )
@@ -68,16 +78,22 @@ def main():
     # -------------------------
     if args.command == "inspect":
 
-        if args.action_or_layer != "bronze":
+        if args.action_or_layer == "bronze":
+            result = inspect_bronze(
+                job=args.job,
+                market=market,
+                window=args.window,
+            )
+        elif args.action_or_layer == "silver":
+            result = inspect_silver(
+                job=args.job,
+                market=market,
+                window=args.window,
+            )
+        else:
             raise ValueError(
                 f"Unsupported inspect layer: {args.action_or_layer}"
             )
-
-        result = inspect_bronze(
-            job=args.job,
-            market=market,
-            window=args.window,
-        )
 
         print(json.dumps(result))
         return
