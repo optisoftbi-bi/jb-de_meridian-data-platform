@@ -222,7 +222,7 @@ Silver קוראת רק את ה־manifest הפעיל ואת קובצי Bronze ה�
 
 DimDate מספק מאפייני תאריך. DimStation נבנה מאיחוד תחנות המוצא והיעד ואינו משמש לאימות נסיעות.
 
-גרעין `station-daily` הוא `market + station + day`, והמדדים הם departures ו־arrivals. תחנה בעלת אירועים מסוג אחד בלבד עדיין מיוצגת והמדד האחר הוא אפס.
+הטבלה הפיזית `gold.trip_events` היא בגרעין של אירוע אחד לנסיעה: departure או arrival. ה־job מחליף את אירועי היום שהתבקש בתוך transaction. הדוח מאגד את האירועים לגרעין `market + station + day`, והמדדים הם departures ו־arrivals. תחנה בעלת אירועים מסוג אחד בלבד עדיין מקבלת אפס במדד האחר.
 
 ## Validation and Failure Semantics
 

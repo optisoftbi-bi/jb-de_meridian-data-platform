@@ -45,3 +45,9 @@ CREATE INDEX IF NOT EXISTS trips_market_window_idx
 
 CREATE INDEX IF NOT EXISTS quarantine_market_window_idx
     ON silver.quarantine (market, source_window);
+
+CREATE INDEX IF NOT EXISTS trips_started_at_idx
+    ON silver.trips (started_at);
+
+CREATE INDEX IF NOT EXISTS trips_ended_at_idx
+    ON silver.trips (ended_at);
