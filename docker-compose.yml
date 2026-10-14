@@ -34,10 +34,52 @@ services:
       postgres:
         condition: service_healthy
 
+  airflow:
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    command: standalone
+    user: "50000:0"
+    group_add:
+      - ${DOCKER_GID:-1001}
+    environment:
+      AIRFLOW_HOME: /opt/airflow
+      AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+      AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      MERIDIAN_DOCKER_NETWORK: ${COMPOSE_PROJECT_NAME:-meridian}_meridian_network
+      MERIDIAN_BRONZE_VOLUME: ${COMPOSE_PROJECT_NAME:-meridian}_bronze_data
+    ports:
+      - "8080:8080"
+    volumes:
+      - airflow_data:/opt/airflow
+      - ./airflow/dags:/opt/airflow/dags:ro
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - meridian_network
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          python -c "import urllib.request;
+          urllib.request.urlopen('http://localhost:8080/api/v2/monitor/health')"
+      interval: 10s
+      timeout: 10s
+      retries: 20
+      start_period: 30s
+
 
 volumes:
   postgres_data:
   bronze_data:
+  airflow_data:
 
 
 networks:

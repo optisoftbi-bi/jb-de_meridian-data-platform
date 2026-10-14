@@ -83,7 +83,7 @@ Silver נשמרת ב־PostgreSQL ומכילה שורה אחידה ומטופלת
 - כל `run`, `inspect` או `report` יוצר compute container זמני שמת בסיום.
 - state נשמר ב־volumes וב־PostgreSQL, ולא ב־filesystem של compute container.
 
-`just up` מתחיל את חיי הפרויקט ומעלה את התשתית. `just down` מסיים אותם ומסיר את התשתית וה־volumes בהתאם לחוזה הקורס.
+`just up` מתחיל את חיי הפרויקט ומעלה את PostgreSQL ואת Airflow. `just down` מסיים אותם ומסיר את התשתית וה־volumes בהתאם לחוזה הקורס.
 
 ## Required Interface
 
@@ -127,7 +127,35 @@ just report daily-station-trips jc JC115 2026-06-02
 
 אפשר להחליף את ה־job ל־`trips:nyc` ואת החלון לחודש המבוקש. ingestion מוריד רק את אובייקט המקור שמכסה את ה־coordinate שהתבקש. Silver קוראת רק את Bronze המקומית ושומרת נסיעות תקינות ו־quarantine. Gold הופכת כל נסיעה תקינה לאירוע departure ולאירוע arrival, והדוח מאגד אותם לפי שוק, תחנה ויום.
 
-`just down` מוחק גם את שני ה־volumes ולכן מוחק את נתוני Bronze ואת מסד הנתונים המקומי. אין להריץ אותו אם רוצים להמשיך מאוחר יותר מאותו state; במקרה כזה עוצרים רק את PostgreSQL באמצעות Docker Compose.
+## Airflow
+
+Airflow הוא ה־orchestrator של ה־pipeline. הוא אינו מכיל לוגיקה עסקית חדשה ואינו שומר את נתוני Bronze, Silver או Gold. הוא מפעיל את ארבעת ה־jobs הקיימים בסדר הבא:
+
+```text
+ingest_to_bronze
+        ↓
+transform_to_silver
+        ↓
+transform_to_gold
+        ↓
+report_daily_station_trips
+```
+
+להפעלת התהליך:
+
+1. מריצים `just up` וממתינים לסיום.
+2. פותחים בדפדפן `http://localhost:8080`.
+3. בוחרים את ה־DAG בשם `meridian_bike_pipeline`.
+4. לוחצים Trigger DAG ומזינים `market`, `month`, `day` ו־`station`.
+5. עוקבים אחרי ארבע המשימות והלוג של כל משימה בממשק.
+
+ה־DAG מופעל ידנית (`schedule=None`), משום שכל הרצה צריכה coordinate שמוסר המשתמש. כל משימה נוצרת כ־compute container זמני ונמחקת בסיום. כישלון עוצר את המשימות הבאות, וכל משימה מקבלת עד שני ניסיונות חוזרים.
+
+לצפייה בלוג של שירות Airflow מהטרמינל אפשר להריץ `just airflow-logs`. נתוני ה־metadata והלוגים של Airflow נשמרים ב־volume בשם `airflow_data`; הנתונים העסקיים ממשיכים להישמר רק ב־Bronze וב־PostgreSQL.
+
+Airflow רץ כאן במצב `standalone` עם הרשאת מנהל מקומית כדי לשמור על סביבת הקורס פשוטה. ההגדרה מתאימה לפיתוח ולהדגמה מקומית ולא לשרת production. Airflow ניגש ל־Docker דרך ה־socket המקומי; אם הקבוצה של ה־socket במחשב שונה, יש להציב ב־`.env` את `DOCKER_GID` לפי הפלט של `stat -c '%g' /var/run/docker.sock` ולהפעיל שוב את `just up`.
+
+`just down` מוחק את כל ה־volumes ולכן מוחק את Bronze, את מסד הנתונים המקומי ואת ה־metadata של Airflow. אין להריץ אותו אם רוצים להמשיך מאוחר יותר מאותו state; במקרה כזה משתמשים ב־`docker compose stop`, ולמחרת ב־`docker compose start`.
 
 ## Output Contract
 
@@ -169,7 +197,9 @@ just report daily-station-trips jc JC115 2026-06-02
 │   ├── integration/     Docker, filesystem and PostgreSQL tests
 │   └── fixtures/        Small deterministic source samples
 ├── docs/                Architecture and design decisions
+├── airflow/dags/        Airflow orchestration DAG
 ├── Dockerfile           Shared compute image
+├── Dockerfile.airflow   Airflow image and Docker provider
 ├── docker-compose.yml   Infrastructure definition
 ├── justfile             Required external interface
 ├── requirements.txt     Python dependencies

@@ -1,7 +1,14 @@
 up:
-    docker compose build compute
-    docker compose up -d postgres
+    docker compose build compute airflow
+    docker compose up -d --wait postgres airflow
     docker compose run --rm --no-deps compute true
+
+airflow-up:
+    docker compose build compute airflow
+    docker compose up -d --wait postgres airflow
+
+airflow-logs:
+    docker compose logs -f airflow
 
 run operation job window:
     docker compose run --rm compute python -m src.cli run {{operation}} {{job}} {{window}}

@@ -40,6 +40,8 @@ Public S3 XML listing and archives
             One JSON object
 ```
 
+Airflow עוטף את הזרימה הזו כשכבת orchestration: הוא מפעיל את ארבעת ה־jobs לפי הסדר ועוצר את השרשרת אם שלב נכשל. הלוגיקה והנתונים נשארים ברכיבי ה־pipeline הקיימים.
+
 ## Main Architectural Decisions
 
 ### Local File-Based Bronze
@@ -102,13 +104,21 @@ Image יחיד כולל את אפליקציית Python, ה־dependencies וקו�
 
 כל `run`, `inspect` או `report` יוצר container חדש. ה־container מתחבר לרשת ול־volumes הנדרשים, מבצע פעולה אחת, מחזיר exit code ומוסר בסיום.
 
+### Airflow Service
+
+Airflow רץ כ־service מתמשך במצב `standalone` ומציג ממשק מקומי בפורט 8080. ה־DAG הידני `meridian_bike_pipeline` מקבל market, חודש, יום ותחנה ומפעיל באמצעות DockerOperator ארבעה compute containers זמניים: Bronze, Silver, Gold ולבסוף report.
+
+Airflow מחובר לאותה רשת Docker, ל־Bronze volume ול־Docker socket. ה־metadata והלוגים שלו נשמרים ב־`airflow_data`, ואינם מעורבבים עם נתוני הפרויקט. מצב standalone וה־Simple Auth המקומי נבחרו כדי לשמור על תרגיל פשוט; הם אינם תכנון ל־production.
+
 ## Component Lifetime
 
 רכיבים מתמשכים בזמן חיי הפרויקט:
 
 - PostgreSQL container;
+- Airflow container;
 - Bronze volume;
 - PostgreSQL volume;
+- Airflow metadata volume;
 - shared Docker network.
 
 רכיבים זמניים:
@@ -123,7 +133,7 @@ Image יחיד כולל את אפליקציית Python, ה־dependencies וקו�
 
 ### `just up`
 
-`just up` אינו מקבל inputs ואינו מעבד נתונים. הוא יוצר את הרשת ואת שני ה־volumes, מעלה את PostgreSQL, ממתין עד שהוא מוכן ומאתחל schemas ואובייקטים בסיסיים באופן idempotent.
+`just up` אינו מקבל inputs ואינו מעבד נתונים. הוא בונה את images, יוצר את הרשת וה־volumes, מעלה את PostgreSQL ואת Airflow וממתין עד ששניהם בריאים. לאחר מכן אפשר להריץ jobs בנפרד דרך `just` או את השרשרת המלאה דרך ממשק Airflow.
 
 ### `just run`
 
@@ -139,7 +149,7 @@ Image יחיד כולל את אפליקציית Python, ה־dependencies וקו�
 
 ### `just down`
 
-`just down` מסיים את חיי הפרויקט, עוצר ומסיר containers, מסיר את הרשת ומוחק את Bronze ואת PostgreSQL volumes. לאחר `just down` ואז `just up`, המערכת מתחילה מ־state ריק.
+`just down` מסיים את חיי הפרויקט, עוצר ומסיר containers, מסיר את הרשת ומוחק את Bronze, PostgreSQL ו־Airflow volumes. לאחר `just down` ואז `just up`, המערכת מתחילה מ־state ריק.
 
 ## Network Boundary
 
